@@ -6,10 +6,11 @@
  * - Minimal text interference
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ChevronLeft, ChevronRight, Camera } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Camera, Download, ZoomIn } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
 
 interface Photo {
   id: number;
@@ -78,6 +79,7 @@ const staticPhotos: Photo[] = [
 export default function Photography() {
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   // Fetch photos from database
   const { data: dbPhotos, isLoading } = trpc.photos.list.useQuery({});
@@ -100,17 +102,21 @@ export default function Photography() {
     return staticPhotos;
   }, [dbPhotos]);
 
-  const openLightbox = (photo: Photo) => {
+  const openLightbox = useCallback((photo: Photo) => {
     setSelectedPhoto(photo);
+    setIsLightboxOpen(true);
     document.body.style.overflow = "hidden";
-  };
+  }, []);
 
-  const closeLightbox = () => {
-    setSelectedPhoto(null);
-    document.body.style.overflow = "auto";
-  };
+  const closeLightbox = useCallback(() => {
+    setIsLightboxOpen(false);
+    setTimeout(() => {
+      setSelectedPhoto(null);
+      document.body.style.overflow = "auto";
+    }, 300);
+  }, []);
 
-  const navigatePhoto = (direction: "prev" | "next") => {
+  const navigatePhoto = useCallback((direction: "prev" | "next") => {
     if (!selectedPhoto) return;
     const currentIndex = photos.findIndex((p) => p.id === selectedPhoto.id);
     const newIndex =
@@ -118,7 +124,48 @@ export default function Photography() {
         ? (currentIndex + 1) % photos.length
         : (currentIndex - 1 + photos.length) % photos.length;
     setSelectedPhoto(photos[newIndex]);
-  };
+  }, [selectedPhoto, photos]);
+
+  // Handle keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isLightboxOpen) return;
+      
+      switch (e.key) {
+        case "Escape":
+          closeLightbox();
+          break;
+        case "ArrowLeft":
+          navigatePhoto("prev");
+          break;
+        case "ArrowRight":
+          navigatePhoto("next");
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isLightboxOpen, closeLightbox, navigatePhoto]);
+
+  // Handle download
+  const handleDownload = useCallback(async (photo: Photo) => {
+    try {
+      const response = await fetch(photo.src);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${photo.title.replace(/\s+/g, "_")}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      toast.success("图片下载成功");
+    } catch (error) {
+      toast.error("下载失败，请稍后重试");
+    }
+  }, []);
 
   if (isLoading) {
     return (
@@ -176,19 +223,28 @@ export default function Photography() {
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: index * 0.1 }}
-                className={`relative cursor-pointer overflow-hidden ${
+                className={`relative overflow-hidden group ${
                   index === 0 || index === 3 ? "md:col-span-2" : ""
                 }`}
                 onMouseEnter={() => setHoveredId(photo.id)}
                 onMouseLeave={() => setHoveredId(null)}
-                onClick={() => openLightbox(photo)}
               >
                 <div
                   className={`relative ${
                     index === 0 || index === 3
                       ? "aspect-[21/9]"
                       : "aspect-[4/5]"
-                  } overflow-hidden`}
+                  } overflow-hidden cursor-pointer`}
+                  onClick={() => openLightbox(photo)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      openLightbox(photo);
+                    }
+                  }}
+                  aria-label={`查看 ${photo.title}`}
                 >
                   <motion.img
                     src={photo.src}
@@ -205,15 +261,37 @@ export default function Photography() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: hoveredId === photo.id ? 1 : 0 }}
                     transition={{ duration: 0.3 }}
-                    className="absolute inset-0 bg-black/40 flex items-end p-6 md:p-8"
+                    className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent flex items-end p-6 md:p-8"
                   >
-                    <div>
+                    <div className="flex-1">
                       <h3 className="font-display text-2xl md:text-3xl text-white mb-2">
                         {photo.title}
                       </h3>
                       <p className="font-nav text-sm text-white/70 tracking-wide">
                         {photo.location} {photo.location && photo.year && "·"} {photo.year}
                       </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openLightbox(photo);
+                        }}
+                        className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+                        aria-label="放大查看"
+                      >
+                        <ZoomIn className="w-5 h-5 text-white" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(photo);
+                        }}
+                        className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+                        aria-label="下载图片"
+                      >
+                        <Download className="w-5 h-5 text-white" />
+                      </button>
                     </div>
                   </motion.div>
                 </div>
@@ -225,21 +303,37 @@ export default function Photography() {
 
       {/* Lightbox */}
       <AnimatePresence>
-        {selectedPhoto && (
+        {isLightboxOpen && selectedPhoto && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="fixed inset-0 z-50 bg-black/95 flex items-center justify-center"
+            className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center"
             onClick={closeLightbox}
+            role="dialog"
+            aria-modal="true"
+            aria-label="图片查看器"
           >
             {/* Close Button */}
             <button
               onClick={closeLightbox}
-              className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors z-50"
+              className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors z-[110] p-2 hover:bg-white/10 rounded-full"
+              aria-label="关闭"
             >
               <X size={28} />
+            </button>
+
+            {/* Download Button in Lightbox */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDownload(selectedPhoto);
+              }}
+              className="absolute top-6 right-20 text-white/70 hover:text-white transition-colors z-[110] p-2 hover:bg-white/10 rounded-full"
+              aria-label="下载图片"
+            >
+              <Download size={24} />
             </button>
 
             {/* Navigation Buttons */}
@@ -248,7 +342,8 @@ export default function Photography() {
                 e.stopPropagation();
                 navigatePhoto("prev");
               }}
-              className="absolute left-4 md:left-8 text-white/50 hover:text-white transition-colors z-50"
+              className="absolute left-4 md:left-8 top-1/2 -translate-y-1/2 text-white/50 hover:text-white transition-colors z-[110] p-2 hover:bg-white/10 rounded-full"
+              aria-label="上一张"
             >
               <ChevronLeft size={40} />
             </button>
@@ -257,7 +352,8 @@ export default function Photography() {
                 e.stopPropagation();
                 navigatePhoto("next");
               }}
-              className="absolute right-4 md:right-8 text-white/50 hover:text-white transition-colors z-50"
+              className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 text-white/50 hover:text-white transition-colors z-[110] p-2 hover:bg-white/10 rounded-full"
+              aria-label="下一张"
             >
               <ChevronRight size={40} />
             </button>
@@ -274,9 +370,9 @@ export default function Photography() {
               <img
                 src={selectedPhoto.src}
                 alt={selectedPhoto.title}
-                className="max-h-[70vh] md:max-h-[80vh] w-auto object-contain"
+                className="max-h-[70vh] md:max-h-[80vh] w-auto object-contain rounded-lg"
               />
-              <div className="text-center md:text-left md:max-w-xs">
+              <div className="text-center md:text-left md:max-w-xs shrink-0">
                 <h2 className="font-display text-3xl text-white mb-2">
                   {selectedPhoto.title}
                 </h2>
@@ -294,6 +390,10 @@ export default function Photography() {
                     {selectedPhoto.settings && <p>⚙️ {selectedPhoto.settings}</p>}
                   </div>
                 )}
+                {/* Photo counter */}
+                <p className="text-sm text-white/30 mt-4">
+                  {photos.findIndex(p => p.id === selectedPhoto.id) + 1} / {photos.length}
+                </p>
               </div>
             </motion.div>
           </motion.div>

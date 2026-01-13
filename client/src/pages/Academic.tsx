@@ -99,9 +99,28 @@ export default function Academic() {
     return staticPapers;
   }, [dbPapers]);
 
-  const handleDownload = (pdfUrl?: string) => {
+  const handleDownload = async (pdfUrl?: string, title?: string) => {
     if (pdfUrl) {
-      window.open(pdfUrl, "_blank");
+      try {
+        // Try to download the file
+        const response = await fetch(pdfUrl);
+        if (!response.ok) {
+          throw new Error('Download failed');
+        }
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = title ? `${title.replace(/[^a-zA-Z0-9]/g, '_')}.pdf` : 'paper.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        toast.success("PDF下载成功");
+      } catch (error) {
+        // Fallback to opening in new tab
+        window.open(pdfUrl, "_blank");
+      }
     } else {
       toast("Coming Soon", {
         description: "PDF downloads will be available soon.",
@@ -270,7 +289,7 @@ export default function Academic() {
                     </button>
                   )}
                   <button
-                    onClick={() => handleDownload(paper.pdfUrl)}
+                    onClick={() => handleDownload(paper.pdfUrl, paper.title)}
                     className="flex items-center gap-2 font-nav text-sm tracking-wider px-4 py-2 bg-white/10 hover:bg-white/20 rounded-full text-white/80 hover:text-white transition-all"
                   >
                     <Download size={14} />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
-import { Edit, GraduationCap, Plus, Trash2, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { Edit, GraduationCap, Plus, Trash2, Eye, EyeOff, ExternalLink, Upload, FileText, X } from "lucide-react";
 import { toast } from "sonner";
 
 type PaperFormData = {
@@ -61,6 +61,8 @@ export default function AdminPapers() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<PaperFormData>(defaultFormData);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const utils = trpc.useUtils();
   const { data: papers, isLoading } = trpc.papers.listAll.useQuery({});
@@ -98,6 +100,49 @@ export default function AdminPapers() {
       toast.error("删除失败: " + error.message);
     },
   });
+
+  const uploadMutation = trpc.upload.pdf.useMutation({
+    onSuccess: (data) => {
+      setFormData(prev => ({
+        ...prev,
+        pdfUrl: data.url,
+        pdfKey: data.key,
+      }));
+      setIsUploading(false);
+      toast.success("PDF上传成功");
+    },
+    onError: (error) => {
+      setIsUploading(false);
+      toast.error("上传失败: " + error.message);
+    },
+  });
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== 'application/pdf') {
+      toast.error("请选择PDF文件");
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error("PDF大小不能超过 50MB");
+      return;
+    }
+
+    setIsUploading(true);
+    
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      uploadMutation.mutate({
+        filename: file.name,
+        base64Data: base64,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
 
   const openCreateDialog = () => {
     setEditingId(null);
@@ -230,6 +275,11 @@ export default function AdminPapers() {
                       {paper.featured && (
                         <span className="px-2 py-0.5 text-xs rounded-full bg-purple-100 text-purple-700">
                           精选
+                        </span>
+                      )}
+                      {paper.pdfUrl && (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">
+                          有PDF
                         </span>
                       )}
                       {paper.journal && (
@@ -421,24 +471,90 @@ export default function AdminPapers() {
               </div>
             </div>
 
-            {/* DOI & PDF URL */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="doi">DOI</Label>
-                <Input
-                  id="doi"
-                  value={formData.doi}
-                  onChange={(e) => setFormData(prev => ({ ...prev, doi: e.target.value }))}
-                  placeholder="如：10.1000/xyz123"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pdfUrl">PDF 链接</Label>
+            {/* DOI */}
+            <div className="space-y-2">
+              <Label htmlFor="doi">DOI</Label>
+              <Input
+                id="doi"
+                value={formData.doi}
+                onChange={(e) => setFormData(prev => ({ ...prev, doi: e.target.value }))}
+                placeholder="如：10.1000/xyz123"
+              />
+            </div>
+
+            {/* PDF Upload */}
+            <div className="space-y-2">
+              <Label>PDF 文件</Label>
+              {formData.pdfUrl ? (
+                <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border">
+                  <FileText className="h-8 w-8 text-red-500" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-900 truncate">
+                      PDF 已上传
+                    </p>
+                    <a
+                      href={formData.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-600 hover:underline truncate block"
+                    >
+                      点击预览
+                    </a>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => setFormData(prev => ({ ...prev, pdfUrl: "", pdfKey: "" }))}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isUploading
+                      ? "border-blue-300 bg-blue-50"
+                      : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    className="hidden"
+                    onChange={handleFileChange}
+                  />
+                  {isUploading ? (
+                    <>
+                      <div className="animate-spin h-8 w-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">上传中...</p>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-8 w-8 text-slate-400 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">
+                        点击上传 PDF 文件
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        最大 50MB
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+              {/* Manual URL input as fallback */}
+              <div className="mt-2">
+                <Label htmlFor="pdfUrl" className="text-xs text-slate-500">
+                  或手动输入 PDF 链接
+                </Label>
                 <Input
                   id="pdfUrl"
                   value={formData.pdfUrl}
                   onChange={(e) => setFormData(prev => ({ ...prev, pdfUrl: e.target.value }))}
-                  placeholder="PDF 下载链接"
+                  placeholder="https://..."
+                  className="mt-1"
                 />
               </div>
             </div>
